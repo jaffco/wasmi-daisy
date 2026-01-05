@@ -1,0 +1,15 @@
+[package]
+name = "wasmi-daisy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmi = { git = "https://github.com/wasmi-labs/wasmi", default-features = false }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+
+[lib]
+crate-type = ["staticlib"]
