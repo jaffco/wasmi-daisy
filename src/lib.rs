@@ -224,6 +224,93 @@ pub unsafe extern "C" fn wasmi_func_call_i32_i32_to_i32(
     }
 }
 
+/// Call a function that takes one f32 param and returns one f32
+/// Returns 0.0 on error
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_func_call_f32_to_f32(
+    store: *mut WasmiStore,
+    func: *const WasmiFunc,
+    arg: f32,
+) -> f32 {
+    if store.is_null() || func.is_null() {
+        return 0.0;
+    }
+    
+    let store_ref = &mut *(store as *mut Store<()>);
+    let func_ref = &*(func as *const Func);
+    
+    let mut results = [Val::F32(0.0.into())];
+    match func_ref.call(store_ref, &[Val::F32(arg.into())], &mut results) {
+        Ok(_) => {
+            if let Val::F32(result) = results[0] {
+                result.into()
+            } else {
+                0.0
+            }
+        }
+        Err(_) => 0.0,
+    }
+}
+
+/// Call a function that processes float buffers
+/// Copies input_buffer to WASM memory, calls function, copies output back
+/// WASM function signature: (i32 input_ptr, i32 output_ptr, i32 size) -> void
+/// Returns 0 on success, -1 on error
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_func_call_buffer_process(
+    store: *mut WasmiStore,
+    instance: *mut WasmiInstance,
+    func: *const WasmiFunc,
+    input_buffer: *const f32,
+    output_buffer: *mut f32,
+    buffer_size: usize,
+) -> i32 {
+    if store.is_null() || instance.is_null() || func.is_null() || input_buffer.is_null() || output_buffer.is_null() {
+        return -1;
+    }
+    
+    let store_ref = &mut *(store as *mut Store<()>);
+    let instance_ref = &*(instance as *const Instance);
+    let func_ref = &*(func as *const Func);
+    
+    // Get WASM memory
+    let memory = match instance_ref.get_export(&mut *store_ref, "memory") {
+        Some(Extern::Memory(mem)) => mem,
+        _ => return -1,
+    };
+    
+    let byte_size = buffer_size * 4; // f32 = 4 bytes
+    
+    // Use fixed memory locations: input at offset 0, output at offset after input
+    let input_offset = 0;
+    let output_offset = byte_size;
+    
+    // Copy input buffer to WASM memory
+    let input_slice = slice::from_raw_parts(input_buffer as *const u8, byte_size);
+    if memory.write(&mut *store_ref, input_offset, input_slice).is_err() {
+        return -1;
+    }
+    
+    // Call WASM function with memory offsets
+    let args = [
+        Val::I32(input_offset as i32),
+        Val::I32(output_offset as i32),
+        Val::I32(buffer_size as i32),
+    ];
+    
+    if func_ref.call(&mut *store_ref, &args, &mut []).is_err() {
+        return -1;
+    }
+    
+    // Copy output buffer from WASM memory
+    let output_slice = slice::from_raw_parts_mut(output_buffer as *mut u8, byte_size);
+    if memory.read(&mut *store_ref, output_offset, output_slice).is_err() {
+        return -1;
+    }
+    
+    0
+}
+
 /// Delete a function handle
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasmi_func_delete(func: *mut WasmiFunc) {

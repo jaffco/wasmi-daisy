@@ -51,6 +51,22 @@ void wasmi_func_delete(WasmiFunc* func);
 
 /* Function calling - simplified for common cases */
 int32_t wasmi_func_call_i32_i32_to_i32(WasmiStore* store, const WasmiFunc* func, int32_t arg0, int32_t arg1);
+float wasmi_func_call_f32_to_f32(WasmiStore* store, const WasmiFunc* func, float arg);
+
+/* Buffer processing - for audio/DSP
+ * Copies input_buffer to WASM memory, calls function with (input_ptr, output_ptr, size),
+ * then copies WASM memory back to output_buffer.
+ * WASM function signature must be: (i32, i32, i32) -> void
+ * Returns 0 on success, -1 on error
+ */
+int32_t wasmi_func_call_buffer_process(
+    WasmiStore* store,
+    WasmiInstance* instance,
+    const WasmiFunc* func,
+    const float* input_buffer,
+    float* output_buffer,
+    size_t buffer_size
+);
 
 #ifdef __cplusplus
 }
