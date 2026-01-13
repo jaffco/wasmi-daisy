@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 wasmi = { git = "https://github.com/wasmi-labs/wasmi", default-features = false }
+spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }
 
 [profile.release]
 lto = "fat"

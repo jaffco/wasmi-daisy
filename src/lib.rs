@@ -3,10 +3,40 @@
 extern crate alloc;
 
 use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 use wasmi::*;
 
 // Use Jaffx SDRAM allocator via extern C callbacks
 use core::alloc::{GlobalAlloc, Layout};
+
+// Error reporting
+static ERROR_BUFFER: spin::Mutex<alloc::vec::Vec<u8>> = spin::Mutex::new(alloc::vec::Vec::new());
+static HAS_ERROR: AtomicBool = AtomicBool::new(false);
+
+/// Store an error message in the error buffer
+fn set_error(msg: &str) {
+    let mut buffer = ERROR_BUFFER.lock();
+    buffer.clear();
+    buffer.extend_from_slice(msg.as_bytes());
+    buffer.push(0); // null terminator
+    HAS_ERROR.store(true, Ordering::Release);
+}
+
+/// Store a formatted error with Display trait
+fn set_error_from_display<E: core::fmt::Display>(prefix: &str, error: E) {
+    let mut buffer = ERROR_BUFFER.lock();
+    buffer.clear();
+    buffer.extend_from_slice(prefix.as_bytes());
+    let error_str = alloc::format!("{}", error);
+    buffer.extend_from_slice(error_str.as_bytes());
+    buffer.push(0); // null terminator
+    HAS_ERROR.store(true, Ordering::Release);
+}
+
+/// Clear the error buffer
+fn clear_error() {
+    HAS_ERROR.store(false, Ordering::Release);
+}
 
 // External C functions provided by Jaffx SDRAM manager
 extern "C" {
@@ -108,7 +138,10 @@ pub unsafe extern "C" fn wasmi_module_new(
     wasm_bytes: *const u8,
     wasm_len: usize,
 ) -> *mut WasmiModule {
+    clear_error();
+    
     if engine.is_null() || wasm_bytes.is_null() {
+        set_error("wasmi_module_new: null pointer argument");
         return core::ptr::null_mut();
     }
     
@@ -120,7 +153,10 @@ pub unsafe extern "C" fn wasmi_module_new(
             let boxed = alloc::boxed::Box::new(module);
             alloc::boxed::Box::into_raw(boxed) as *mut WasmiModule
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(e) => {
+            set_error_from_display("wasmi_module_new failed: ", e);
+            core::ptr::null_mut()
+        },
     }
 }
 
@@ -139,7 +175,10 @@ pub unsafe extern "C" fn wasmi_instance_new(
     store: *mut WasmiStore,
     module: *const WasmiModule,
 ) -> *mut WasmiInstance {
+    clear_error();
+    
     if store.is_null() || module.is_null() {
+        set_error("wasmi_instance_new: null pointer argument");
         return core::ptr::null_mut();
     }
     
@@ -153,7 +192,10 @@ pub unsafe extern "C" fn wasmi_instance_new(
             let boxed = alloc::boxed::Box::new(instance);
             alloc::boxed::Box::into_raw(boxed) as *mut WasmiInstance
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(e) => {
+            set_error_from_display("wasmi_instance_new failed: ", e);
+            core::ptr::null_mut()
+        },
     }
 }
 
@@ -317,6 +359,32 @@ pub unsafe extern "C" fn wasmi_func_delete(func: *mut WasmiFunc) {
     if !func.is_null() {
         let _ = alloc::boxed::Box::from_raw(func as *mut Func);
     }
+}
+
+/// Get the last error message
+/// Returns pointer to null-terminated string, or null if no error
+/// The string is valid until the next wasmi call
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_get_last_error() -> *const u8 {
+    if HAS_ERROR.load(Ordering::Acquire) {
+        let buffer = ERROR_BUFFER.lock();
+        buffer.as_ptr()
+    } else {
+        core::ptr::null()
+    }
+}
+
+/// Check if there is a pending error
+/// Returns 1 if error exists, 0 otherwise
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_has_error() -> i32 {
+    if HAS_ERROR.load(Ordering::Acquire) { 1 } else { 0 }
+}
+
+/// Clear the last error
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_clear_error() {
+    clear_error();
 }
 
 // Panic handler for no_std

@@ -36,6 +36,7 @@ dependencies = [
 name = "wasmi-daisy"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "wasmi",
 ]
 
