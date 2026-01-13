@@ -44,6 +44,23 @@ extern "C" {
     fn jaffx_sdram_free(ptr: *mut u8);
 }
 
+// External C math functions (implemented using CMSIS DSP)
+extern "C" {
+    fn wasmi_host_sinf(x: f32) -> f32;
+    fn wasmi_host_cosf(x: f32) -> f32;
+    fn wasmi_host_tanf(x: f32) -> f32;
+    fn wasmi_host_sqrtf(x: f32) -> f32;
+    fn wasmi_host_powf(x: f32, y: f32) -> f32;
+    fn wasmi_host_expf(x: f32) -> f32;
+    fn wasmi_host_logf(x: f32) -> f32;
+    fn wasmi_host_log10f(x: f32) -> f32;
+    fn wasmi_host_fabsf(x: f32) -> f32;
+    fn wasmi_host_floorf(x: f32) -> f32;
+    fn wasmi_host_ceilf(x: f32) -> f32;
+    fn wasmi_host_fmodf(x: f32, y: f32) -> f32;
+    fn wasmi_host_atan2f(y: f32, x: f32) -> f32;
+}
+
 struct JaffxSdramAllocator;
 
 unsafe impl Sync for JaffxSdramAllocator {}
@@ -185,7 +202,25 @@ pub unsafe extern "C" fn wasmi_instance_new(
     let store_ref = &mut *(store as *mut Store<()>);
     let module_ref = &*(module as *const Module);
     
-    let linker: Linker<()> = Linker::new(store_ref.engine());
+    // Create linker and register math functions from CMSIS DSP
+    let mut linker: Linker<()> = Linker::new(store_ref.engine());
+    
+    // Register single-argument math functions
+    let _ = linker.func_wrap("env", "_sinf", |x: f32| -> f32 { wasmi_host_sinf(x) });
+    let _ = linker.func_wrap("env", "_cosf", |x: f32| -> f32 { wasmi_host_cosf(x) });
+    let _ = linker.func_wrap("env", "_tanf", |x: f32| -> f32 { wasmi_host_tanf(x) });
+    let _ = linker.func_wrap("env", "_sqrtf", |x: f32| -> f32 { wasmi_host_sqrtf(x) });
+    let _ = linker.func_wrap("env", "_expf", |x: f32| -> f32 { wasmi_host_expf(x) });
+    let _ = linker.func_wrap("env", "_logf", |x: f32| -> f32 { wasmi_host_logf(x) });
+    let _ = linker.func_wrap("env", "_log10f", |x: f32| -> f32 { wasmi_host_log10f(x) });
+    let _ = linker.func_wrap("env", "_fabsf", |x: f32| -> f32 { wasmi_host_fabsf(x) });
+    let _ = linker.func_wrap("env", "_floorf", |x: f32| -> f32 { wasmi_host_floorf(x) });
+    let _ = linker.func_wrap("env", "_ceilf", |x: f32| -> f32 { wasmi_host_ceilf(x) });
+    
+    // Register two-argument math functions
+    let _ = linker.func_wrap("env", "_powf", |x: f32, y: f32| -> f32 { wasmi_host_powf(x, y) });
+    let _ = linker.func_wrap("env", "_fmodf", |x: f32, y: f32| -> f32 { wasmi_host_fmodf(x, y) });
+    let _ = linker.func_wrap("env", "_atan2f", |y: f32, x: f32| -> f32 { wasmi_host_atan2f(y, x) });
     
     match linker.instantiate_and_start(store_ref, module_ref) {
         Ok(instance) => {
