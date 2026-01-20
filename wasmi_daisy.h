@@ -49,6 +49,11 @@ void wasmi_instance_delete(WasmiInstance* instance);
 WasmiFunc* wasmi_instance_get_func(WasmiStore* store, const WasmiInstance* instance, const uint8_t* name, size_t name_len);
 void wasmi_func_delete(WasmiFunc* func);
 
+/* Error reporting */
+const char* wasmi_get_last_error(void);  /* Returns error message or NULL */
+int32_t wasmi_has_error(void);            /* Returns 1 if error exists, 0 otherwise */
+void wasmi_clear_error(void);             /* Clear the last error */
+
 /* Function calling - simplified for common cases */
 int32_t wasmi_func_call_i32_i32_to_i32(WasmiStore* store, const WasmiFunc* func, int32_t arg0, int32_t arg1);
 float wasmi_func_call_f32_to_f32(WasmiStore* store, const WasmiFunc* func, float arg);

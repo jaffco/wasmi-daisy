@@ -3,15 +3,62 @@
 extern crate alloc;
 
 use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 use wasmi::*;
 
 // Use Jaffx SDRAM allocator via extern C callbacks
 use core::alloc::{GlobalAlloc, Layout};
 
+// Error reporting
+static ERROR_BUFFER: spin::Mutex<alloc::vec::Vec<u8>> = spin::Mutex::new(alloc::vec::Vec::new());
+static HAS_ERROR: AtomicBool = AtomicBool::new(false);
+
+/// Store an error message in the error buffer
+fn set_error(msg: &str) {
+    let mut buffer = ERROR_BUFFER.lock();
+    buffer.clear();
+    buffer.extend_from_slice(msg.as_bytes());
+    buffer.push(0); // null terminator
+    HAS_ERROR.store(true, Ordering::Release);
+}
+
+/// Store a formatted error with Display trait
+fn set_error_from_display<E: core::fmt::Display>(prefix: &str, error: E) {
+    let mut buffer = ERROR_BUFFER.lock();
+    buffer.clear();
+    buffer.extend_from_slice(prefix.as_bytes());
+    let error_str = alloc::format!("{}", error);
+    buffer.extend_from_slice(error_str.as_bytes());
+    buffer.push(0); // null terminator
+    HAS_ERROR.store(true, Ordering::Release);
+}
+
+/// Clear the error buffer
+fn clear_error() {
+    HAS_ERROR.store(false, Ordering::Release);
+}
+
 // External C functions provided by Jaffx SDRAM manager
 extern "C" {
     fn jaffx_sdram_malloc(size: usize) -> *mut u8;
     fn jaffx_sdram_free(ptr: *mut u8);
+}
+
+// External C math functions (implemented using CMSIS DSP)
+extern "C" {
+    fn wasmi_host_sinf(x: f32) -> f32;
+    fn wasmi_host_cosf(x: f32) -> f32;
+    fn wasmi_host_tanf(x: f32) -> f32;
+    fn wasmi_host_sqrtf(x: f32) -> f32;
+    fn wasmi_host_powf(x: f32, y: f32) -> f32;
+    fn wasmi_host_expf(x: f32) -> f32;
+    fn wasmi_host_logf(x: f32) -> f32;
+    fn wasmi_host_log10f(x: f32) -> f32;
+    fn wasmi_host_fabsf(x: f32) -> f32;
+    fn wasmi_host_floorf(x: f32) -> f32;
+    fn wasmi_host_ceilf(x: f32) -> f32;
+    fn wasmi_host_fmodf(x: f32, y: f32) -> f32;
+    fn wasmi_host_atan2f(y: f32, x: f32) -> f32;
 }
 
 struct JaffxSdramAllocator;
@@ -119,7 +166,10 @@ pub unsafe extern "C" fn wasmi_module_new(
     wasm_bytes: *const u8,
     wasm_len: usize,
 ) -> *mut WasmiModule {
+    clear_error();
+    
     if engine.is_null() || wasm_bytes.is_null() {
+        set_error("wasmi_module_new: null pointer argument");
         return core::ptr::null_mut();
     }
     
@@ -131,7 +181,10 @@ pub unsafe extern "C" fn wasmi_module_new(
             let boxed = alloc::boxed::Box::new(module);
             alloc::boxed::Box::into_raw(boxed) as *mut WasmiModule
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(e) => {
+            set_error_from_display("wasmi_module_new failed: ", e);
+            core::ptr::null_mut()
+        },
     }
 }
 
@@ -150,21 +203,45 @@ pub unsafe extern "C" fn wasmi_instance_new(
     store: *mut WasmiStore,
     module: *const WasmiModule,
 ) -> *mut WasmiInstance {
+    clear_error();
+    
     if store.is_null() || module.is_null() {
+        set_error("wasmi_instance_new: null pointer argument");
         return core::ptr::null_mut();
     }
     
     let store_ref = &mut *(store as *mut Store<()>);
     let module_ref = &*(module as *const Module);
     
-    let linker: Linker<()> = Linker::new(store_ref.engine());
+    // Create linker and register math functions from CMSIS DSP
+    let mut linker: Linker<()> = Linker::new(store_ref.engine());
+    
+    // Register single-argument math functions
+    let _ = linker.func_wrap("env", "_sinf", |x: f32| -> f32 { wasmi_host_sinf(x) });
+    let _ = linker.func_wrap("env", "_cosf", |x: f32| -> f32 { wasmi_host_cosf(x) });
+    let _ = linker.func_wrap("env", "_tanf", |x: f32| -> f32 { wasmi_host_tanf(x) });
+    let _ = linker.func_wrap("env", "_sqrtf", |x: f32| -> f32 { wasmi_host_sqrtf(x) });
+    let _ = linker.func_wrap("env", "_expf", |x: f32| -> f32 { wasmi_host_expf(x) });
+    let _ = linker.func_wrap("env", "_logf", |x: f32| -> f32 { wasmi_host_logf(x) });
+    let _ = linker.func_wrap("env", "_log10f", |x: f32| -> f32 { wasmi_host_log10f(x) });
+    let _ = linker.func_wrap("env", "_fabsf", |x: f32| -> f32 { wasmi_host_fabsf(x) });
+    let _ = linker.func_wrap("env", "_floorf", |x: f32| -> f32 { wasmi_host_floorf(x) });
+    let _ = linker.func_wrap("env", "_ceilf", |x: f32| -> f32 { wasmi_host_ceilf(x) });
+    
+    // Register two-argument math functions
+    let _ = linker.func_wrap("env", "_powf", |x: f32, y: f32| -> f32 { wasmi_host_powf(x, y) });
+    let _ = linker.func_wrap("env", "_fmodf", |x: f32, y: f32| -> f32 { wasmi_host_fmodf(x, y) });
+    let _ = linker.func_wrap("env", "_atan2f", |y: f32, x: f32| -> f32 { wasmi_host_atan2f(y, x) });
     
     match linker.instantiate_and_start(store_ref, module_ref) {
         Ok(instance) => {
             let boxed = alloc::boxed::Box::new(instance);
             alloc::boxed::Box::into_raw(boxed) as *mut WasmiInstance
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(e) => {
+            set_error_from_display("wasmi_instance_new failed: ", e);
+            core::ptr::null_mut()
+        },
     }
 }
 
@@ -328,4 +405,36 @@ pub unsafe extern "C" fn wasmi_func_delete(func: *mut WasmiFunc) {
     if !func.is_null() {
         let _ = alloc::boxed::Box::from_raw(func as *mut Func);
     }
+}
+
+/// Get the last error message
+/// Returns pointer to null-terminated string, or null if no error
+/// The string is valid until the next wasmi call
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_get_last_error() -> *const u8 {
+    if HAS_ERROR.load(Ordering::Acquire) {
+        let buffer = ERROR_BUFFER.lock();
+        buffer.as_ptr()
+    } else {
+        core::ptr::null()
+    }
+}
+
+/// Check if there is a pending error
+/// Returns 1 if error exists, 0 otherwise
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_has_error() -> i32 {
+    if HAS_ERROR.load(Ordering::Acquire) { 1 } else { 0 }
+}
+
+/// Clear the last error
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wasmi_clear_error() {
+    clear_error();
+}
+
+// Panic handler for no_std
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
 }
