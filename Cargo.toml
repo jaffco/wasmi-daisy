@@ -10,6 +10,7 @@ wasmi = { git = "https://github.com/wasmi-labs/wasmi", default-features = false 
 lto = "fat"
 codegen-units = 1
 opt-level = "z"
+panic = "abort"
 
 [lib]
 crate-type = ["staticlib"]

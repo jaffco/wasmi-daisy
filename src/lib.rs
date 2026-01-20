@@ -31,6 +31,17 @@ unsafe impl GlobalAlloc for JaffxSdramAllocator {
 #[global_allocator]
 static ALLOCATOR: JaffxSdramAllocator = JaffxSdramAllocator;
 
+// Panic handler for no_std
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+// Provide the Rust exception handling personality function
+// Even with panic="abort", some code may reference this symbol
+#[no_mangle]
+pub extern "C" fn rust_eh_personality() {}
+
 /// Opaque handle to a wasmi engine
 #[repr(C)]
 pub struct WasmiEngine {
@@ -317,10 +328,4 @@ pub unsafe extern "C" fn wasmi_func_delete(func: *mut WasmiFunc) {
     if !func.is_null() {
         let _ = alloc::boxed::Box::from_raw(func as *mut Func);
     }
-}
-
-// Panic handler for no_std
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
 }
