@@ -432,9 +432,3 @@ pub unsafe extern "C" fn wasmi_has_error() -> i32 {
 pub unsafe extern "C" fn wasmi_clear_error() {
     clear_error();
 }
-
-// Panic handler for no_std
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
